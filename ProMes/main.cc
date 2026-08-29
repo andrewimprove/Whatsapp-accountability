@@ -1,4 +1,5 @@
 #include <drogon/drogon.h>
+#include <drogon/orm/DbClient.h>
 #include <iostream>
 #include <string>
 #include <memory>
@@ -8,6 +9,13 @@
 #include <stdlib.h>
 #include <chrono>
 #include <vector>
+#include <string>
+#include <algorithm>
+#include <cctype>
+#include <locale>
+#include <ctime>
+#include <iterator>
+#include <utility>
 
 
  std::string require_env (const char* env_char){
@@ -19,6 +27,16 @@
       std::exit(1);
   }
 
+  std::string today_date(){
+
+  std::time_t time = std::time({});
+  char timeString[std::size("yyyy-mm-dd")];
+
+  std::strftime(std::data(timeString),std::size(timeString),"%F",std::localtime(&time));
+
+  return timeString;
+  }
+
 int main(){
 
   std::string sid = require_env("TSID");
@@ -26,7 +44,13 @@ int main(){
   std::string from_number = require_env("TNUMBER");
   std::string db_connect = require_env("DB_URL");
 
-  std::string to_number = "whatsapp:+61405245648"; //to what number
+
+  std::cout << today_date();
+
+
+  auto dbClient = drogon::orm::DbClient::newPgClient(db_connect,4);
+
+   std::string to_number = "whatsapp:+61405245648"; //to what number
 
   auto client =drogon::HttpClient::newHttpClient("https://api.twilio.com"); //a HTTP client to twillio
 
@@ -35,31 +59,32 @@ int main(){
   std::string cred_encoded = drogon::utils::base64Encode(cred);
   std::string login = "Basic " + cred_encoded;
 
-  std::vector<std::string> tasks;
+  std::vector<std::pair<std::string, std::string>> tasks;
 
-  tasks.push_back("Have you taken B6, Creatine & D3? [Yes/No]");
-  tasks.push_back("Have you brushed your teeth thoroughly with e.toothbrush for 3 mins? [Yes/No]");
-  tasks.push_back("Have you drank 2 glasses of water? [Yes/No]");
-  tasks.push_back("Have you meditated for 15 minutes in the train? [Yes/No]");
+  //Morning List
+  tasks.push_back({"Have you taken B6, Creatine & D3? [Yes/No]","supplements"});
+  tasks.push_back({"Have you brushed your teeth thoroughly with e.toothbrush for 3 mins? [Yes/No]","self-care"});
 
-  std::string app_task;
 
-  for (const std::string &task:tasks){
-    app_task+= task;
-    app_task+= "\n";
-  }
+ // std::string app_task;
 
-  std::cout << app_task << std::endl;
+ // for (const auto & [question,category]:tasks){
+   // app_task+= question;
+   // app_task+= "\n";
+ // }
 
-  auto req = drogon::HttpRequest::newHttpFormPostRequest();
-  req->setPath(t_path);
-  req->setParameter("To",to_number);
-  req->setParameter("From",from_number);
-  req->setParameter("Body", app_task);
-  req->addHeader("Authorization",login);
+ // std::cout << app_task << std::endl;
 
 //Message every 200 seconds
- drogon::app().getLoop()->runEvery(std::chrono::seconds(10),[client,t_path,to_number,from_number,app_task,login,req](){
+ drogon::app().getLoop()->runEvery(std::chrono::seconds(10),[client,t_path,to_number,from_number,tasks,login,dbClient](){
+
+    auto req = drogon::HttpRequest::newHttpFormPostRequest();
+     req->setPath(t_path);
+     req->setParameter("To", to_number);
+     req->setParameter("Body",tasks[0].first);
+     req->setParameter("From", from_number);
+     req->addHeader("Authorization",login);
+
      client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
          if (result != drogon::ReqResult::Ok){
           std::cout
@@ -69,18 +94,50 @@ int main(){
         }
         std::cout << "receive response!" << std::endl;
         std::cout << response->getBody() << std::endl;
-        auto cookies = response -> cookies();
      });
+         for (int i = 0; i < tasks.size(); i++){
+        dbClient->execSqlAsync("INSERT INTO entries (entry_date,question_key) VALUES ($1,$2);",[](const drogon::orm::Result &result){
+        std::cout << "Insert OK" << std::endl;
+      },
+      [](const drogon::orm::DrogonDbException &e){
+        std::cerr << "error: " << e.base().what() << std::endl;
+      },today_date(),tasks[i].second);
+        }
      std::cout << "tick" << std::endl;
  });
 
  //Receiving tasks
 drogon::app().registerHandler(
-    "/whatsapp",[](const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback){
+    "/whatsapp",[dbClient,tasks](const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback){
     drogon::HttpResponsePtr resp = drogon::HttpResponse::newHttpResponse();
     std::string body = req->getParameter("Body");
-    resp->setBody("");
-    std::cout << "Who knocked?" << std::endl;
+
+    std::transform(body.begin(), body.end(), body.begin(),::tolower);
+
+    if (body == "yes"){
+     dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[](const drogon::orm::Result &result){
+         if (result.empty()){
+            std::cout << "Nothing Pending" << std::endl;
+            return;
+         }
+          std::string pending_key = result[0]["question_key"].as<std::string>();
+          std::cout << pending_key << std::endl;
+
+         },[](const drogon::orm::DrogonDbException &e){
+         std::cerr << "error " << e.base().what() << std::endl;
+         },today_date());
+    }
+    else if (body == "no"){
+      dbClient->execSqlAsync("INSERT INTO entries (entry_date,question_key,answer_bool) VALUES ($1,$2,$3);",[](const drogon::orm::Result &result){
+         std::cout << "Insert OK" << std::endl;
+      },
+      [](const drogon::orm::DrogonDbException &e){
+        std::cerr << "error: " << e.base().what() << std::endl;
+      },today_date(),tasks[0].second,false);
+    } else{
+      std::cerr << "Unrecognised reply" << body << std:: endl;
+    }
+    //resp->setBody("");
     std::cout << "Message:" << body << std::endl;
     callback(resp);
     });
