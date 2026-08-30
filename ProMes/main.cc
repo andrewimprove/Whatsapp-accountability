@@ -43,7 +43,7 @@ int main(){
   std::string auth_token = require_env("TTOKEN");
   std::string from_number = require_env("TNUMBER");
   std::string db_connect = require_env("DB_URL");
-
+  std::string content_sid = require_env("CONTENT_SID");
 
   std::cout << today_date();
 
@@ -62,8 +62,8 @@ int main(){
   std::vector<std::pair<std::string, std::string>> tasks;
 
   //Morning List
-  tasks.push_back({"Have you taken B6, Creatine & D3? [Yes/No]","supplements"});
-  tasks.push_back({"Have you brushed your teeth thoroughly with e.toothbrush for 3 mins? [Yes/No]","self-care"});
+  tasks.push_back({"Have you taken B6, Creatine & D3?","supplements"});
+  tasks.push_back({"Have you gone to the gym today","self-care"});
 
 
  // std::string app_task;
@@ -76,12 +76,14 @@ int main(){
  // std::cout << app_task << std::endl;
 
 //Message every 200 seconds
- drogon::app().getLoop()->runEvery(std::chrono::seconds(30),[client,t_path,to_number,from_number,tasks,login,dbClient](){
+ drogon::app().getLoop()->runEvery(std::chrono::seconds(30),[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid](){
 
     auto req = drogon::HttpRequest::newHttpFormPostRequest();
      req->setPath(t_path);
      req->setParameter("To", to_number);
-     req->setParameter("Body",tasks[0].first);
+     req->setParameter("ContentSid",content_sid);
+     std::string start = "{\"1\":\"" + tasks[0].first + "\"}";
+     req->setParameter("ContentVariables",start);
      req->setParameter("From", from_number);
      req->addHeader("Authorization",login);
 
@@ -108,30 +110,30 @@ int main(){
 
  //Receiving tasks
 drogon::app().registerHandler(
-    "/whatsapp",[dbClient,tasks,client,t_path,to_number,from_number,login](const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback){
+    "/whatsapp",[dbClient,tasks,client,t_path,to_number,from_number,login,content_sid](const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback){
     drogon::HttpResponsePtr resp = drogon::HttpResponse::newHttpResponse();
     std::string body = req->getParameter("Body");
 
     std::transform(body.begin(), body.end(), body.begin(),::tolower);
 
     if (body == "yes"){
-         dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[dbClient,client,t_path,to_number,from_number,login,tasks](const drogon::orm::Result &result){
+         dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[dbClient,client,t_path,to_number,from_number,login,tasks,content_sid](const drogon::orm::Result &result){
              if (result.empty()){
              std::cout << "Nothing is pending" << std::endl;
                   return;
              }
          std::string pending_key = result[0]["question_key"].as<std::string>();
          int pending_id = result[0]["id"].as<int>();
-         dbClient->execSqlAsync("UPDATE entries SET answer_bool = $1 WHERE id = $2;",[dbClient,pending_key,client,t_path,to_number,from_number,login,tasks](const drogon::orm::Result &r){
+         dbClient->execSqlAsync("UPDATE entries SET answer_bool = $1 WHERE id = $2;",[dbClient,pending_key,client,t_path,to_number,from_number,login,tasks,content_sid](const drogon::orm::Result &r){
              std::cout << "FILLED" << pending_key << std::endl;
-             dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[client,t_path,to_number,from_number,login,tasks](const drogon::orm::Result &result){
+             dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[client,t_path,to_number,from_number,login,tasks,content_sid](const drogon::orm::Result &result){
                  if (result.empty()){
                  auto req = drogon::HttpRequest::newHttpFormPostRequest();
                      req->setPath(t_path);
                      req->setParameter("To", to_number);
                      req->setParameter("From", from_number);
                      req->addHeader("Authorization",login);
-                    req->setParameter("Body","lets celebrate!");
+                    req->setParameter("Body","All Tasks are finished, well done!");
                    client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
                       if (result != drogon::ReqResult::Ok){
                           std::cout << "error while sending request to server! result: " << result << std::endl;
@@ -159,7 +161,9 @@ drogon::app().registerHandler(
                      req->setParameter("To", to_number);
                      req->setParameter("From", from_number);
                      req->addHeader("Authorization",login);
-                    req->setParameter("Body",next_text);
+                     req->setParameter("ContentSid",content_sid);
+                     std::string start = "{\"1\":\"" + next_text + "\"}";
+                     req->setParameter("ContentVariables",start);
                    client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
                       if (result != drogon::ReqResult::Ok){
                           std::cout << "error while sending request to server! result: " << result << std::endl;
