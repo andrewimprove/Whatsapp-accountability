@@ -76,7 +76,7 @@ int main(){
  // std::cout << app_task << std::endl;
 
 //Message every 200 seconds
- drogon::app().getLoop()->runEvery(std::chrono::seconds(10),[client,t_path,to_number,from_number,tasks,login,dbClient](){
+ drogon::app().getLoop()->runEvery(std::chrono::seconds(30),[client,t_path,to_number,from_number,tasks,login,dbClient](){
 
     auto req = drogon::HttpRequest::newHttpFormPostRequest();
      req->setPath(t_path);
@@ -108,21 +108,74 @@ int main(){
 
  //Receiving tasks
 drogon::app().registerHandler(
-    "/whatsapp",[dbClient,tasks](const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback){
+    "/whatsapp",[dbClient,tasks,client,t_path,to_number,from_number,login](const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback){
     drogon::HttpResponsePtr resp = drogon::HttpResponse::newHttpResponse();
     std::string body = req->getParameter("Body");
 
     std::transform(body.begin(), body.end(), body.begin(),::tolower);
 
     if (body == "yes"){
-     dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[](const drogon::orm::Result &result){
-         if (result.empty()){
-            std::cout << "Nothing Pending" << std::endl;
-            return;
-         }
-          std::string pending_key = result[0]["question_key"].as<std::string>();
-          std::cout << pending_key << std::endl;
-
+         dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[dbClient,client,t_path,to_number,from_number,login,tasks](const drogon::orm::Result &result){
+             if (result.empty()){
+             std::cout << "Nothing is pending" << std::endl;
+                  return;
+             }
+         std::string pending_key = result[0]["question_key"].as<std::string>();
+         int pending_id = result[0]["id"].as<int>();
+         dbClient->execSqlAsync("UPDATE entries SET answer_bool = $1 WHERE id = $2;",[dbClient,pending_key,client,t_path,to_number,from_number,login,tasks](const drogon::orm::Result &r){
+             std::cout << "FILLED" << pending_key << std::endl;
+             dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[client,t_path,to_number,from_number,login,tasks](const drogon::orm::Result &result){
+                 if (result.empty()){
+                 auto req = drogon::HttpRequest::newHttpFormPostRequest();
+                     req->setPath(t_path);
+                     req->setParameter("To", to_number);
+                     req->setParameter("From", from_number);
+                     req->addHeader("Authorization",login);
+                    req->setParameter("Body","lets celebrate!");
+                   client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
+                      if (result != drogon::ReqResult::Ok){
+                          std::cout << "error while sending request to server! result: " << result << std::endl;
+                         return;
+                       }
+                        std::cout << "receive response!" << std::endl;
+                        std::cout << response->getBody() << std::endl;
+                       });
+                 return;
+                 }else{
+                   std::string next_key = result[0]["question_key"].as<std::string>();
+                   std::string next_text;
+                   for (int i = 0; i < tasks.size(); i++){
+                      if (tasks[i].second == next_key){
+                       next_text = tasks[i].first;
+                       break;
+                      }
+                     }
+                   if (next_text.empty()){
+                   std::cerr << "Missing key" << std::endl;
+                    return;
+                   }
+                     auto req = drogon::HttpRequest::newHttpFormPostRequest();
+                     req->setPath(t_path);
+                     req->setParameter("To", to_number);
+                     req->setParameter("From", from_number);
+                     req->addHeader("Authorization",login);
+                    req->setParameter("Body",next_text);
+                   client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
+                      if (result != drogon::ReqResult::Ok){
+                          std::cout << "error while sending request to server! result: " << result << std::endl;
+                         return;
+                       }
+                        std::cout << "receive response!" << std::endl;
+                        std::cout << response->getBody() << std::endl;
+                       });
+                }
+                 },[](const drogon::orm::DrogonDbException &e){
+                   std::cerr <<"error " << e.base().what() << std::endl;
+                 },today_date());
+             },
+             [](const drogon::orm::DrogonDbException &e){
+                std::cerr << "error " <<e.base().what() << std::endl;
+             },true,pending_id);
          },[](const drogon::orm::DrogonDbException &e){
          std::cerr << "error " << e.base().what() << std::endl;
          },today_date());
