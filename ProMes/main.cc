@@ -35,7 +35,22 @@
   std::strftime(std::data(timeString),std::size(timeString),"%F",std::localtime(&time));
 
   return timeString;
+
+   }
+
+
+int clock_reader(){
+   std::time_t rawtime;
+   struct tm * timeinfo;
+
+   char buffer [80];
+   time (&rawtime);
+
+   timeinfo = localtime(&rawtime);
+
+   return timeinfo->tm_hour * 100 + timeinfo -> tm_min;
   }
+
 
 int main(){
 
@@ -45,8 +60,7 @@ int main(){
   std::string db_connect = require_env("DB_URL");
   std::string content_sid = require_env("CONTENT_SID");
 
-  std::cout << today_date();
-
+  std::cout << today_date() << std::endl;
 
   auto dbClient = drogon::orm::DbClient::newPgClient(db_connect,4);
 
@@ -59,14 +73,21 @@ int main(){
   std::string cred_encoded = drogon::utils::base64Encode(cred);
   std::string login = "Basic " + cred_encoded;
 
+  std::vector<std::pair<std::string, std::string>> morning_tasks;
+  std::vector<std::pair<std::string, std::string>> noon_tasks;
+  std::vector<std::pair<std::string, std::string>> evening_tasks;
+  std::vector<std::pair<std::string, std::string>> night_tasks;
   std::vector<std::pair<std::string, std::string>> tasks;
 
+
   //Morning List
-  tasks.push_back({"Have you taken B6, Creatine & D3?","supplements"});
-  tasks.push_back({"Have you gone to the gym today","self-care"});
+  morning_tasks.push_back({"Have you taken B6, Creatine & D3?","morning_tasks"});
+  noon_tasks.push_back({"Have you gone to the gym today?","noon_tasks"});
+  night_tasks.push_back({"Have you recorded footage on instagram today?","night_tasks"});
+  evening_tasks.push_back({"Have you learned a new concept in programming today?","evening_tasks"});
+  
 
-
- // std::string app_task;
+  // std::string app_task;
 
  // for (const auto & [question,category]:tasks){
    // app_task+= question;
@@ -76,13 +97,24 @@ int main(){
  // std::cout << app_task << std::endl;
 
 //Message every 200 seconds
- drogon::app().getLoop()->runEvery(std::chrono::seconds(30),[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid](){
+ drogon::app().getLoop()->runEvery(std::chrono::seconds(20),[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid,morning_tasks,noon_tasks,night_tasks,evening_tasks](){
+
+     int now = clock_reader();
+
+     std::vector<std::pair<std::string, std::string>> slots_tasks;
+
+     if (now == 245) slots_tasks = morning_tasks;
+     else if (now == 246) slots_tasks = noon_tasks;
+     else if (now == 1830) slots_tasks = evening_tasks;
+     else if (now == 2230) slots_tasks = night_tasks;
+     else return;
+
 
     auto req = drogon::HttpRequest::newHttpFormPostRequest();
      req->setPath(t_path);
      req->setParameter("To", to_number);
      req->setParameter("ContentSid",content_sid);
-     std::string start = "{\"1\":\"" + tasks[0].first + "\"}";
+     std::string start = "{\"1\":\"" + slots_tasks[0].first + "\"}";
      req->setParameter("ContentVariables",start);
      req->setParameter("From", from_number);
      req->addHeader("Authorization",login);
@@ -97,13 +129,13 @@ int main(){
         std::cout << "receive response!" << std::endl;
         std::cout << response->getBody() << std::endl;
      });
-         for (int i = 0; i < tasks.size(); i++){
+         for (int i = 0; i < slots_tasks.size(); i++){
         dbClient->execSqlAsync("INSERT INTO entries (entry_date,question_key) VALUES ($1,$2);",[](const drogon::orm::Result &result){
         std::cout << "Insert OK" << std::endl;
       },
       [](const drogon::orm::DrogonDbException &e){
         std::cerr << "error: " << e.base().what() << std::endl;
-      },today_date(),tasks[i].second);
+      },today_date(),slots_tasks[i].second);
         }
      std::cout << "tick" << std::endl;
  });
@@ -164,7 +196,7 @@ drogon::app().registerHandler(
                      req->setParameter("ContentSid",content_sid);
                      std::string start = "{\"1\":\"" + next_text + "\"}";
                      req->setParameter("ContentVariables",start);
-                   client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
+                     client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
                       if (result != drogon::ReqResult::Ok){
                           std::cout << "error while sending request to server! result: " << result << std::endl;
                          return;
