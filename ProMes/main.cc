@@ -85,32 +85,28 @@ int main(){
   noon_tasks.push_back({"Have you gone to the gym today?","noon_tasks"});
   night_tasks.push_back({"Have you recorded footage on instagram today?","night_tasks"});
   evening_tasks.push_back({"Have you learned a new concept in programming today?","evening_tasks"});
-  
 
-  // std::string app_task;
 
- // for (const auto & [question,category]:tasks){
-   // app_task+= question;
-   // app_task+= "\n";
- // }
-
- // std::cout << app_task << std::endl;
 
 //Message every 200 seconds
- drogon::app().getLoop()->runEvery(std::chrono::seconds(20),[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid,morning_tasks,noon_tasks,night_tasks,evening_tasks](){
+ drogon::app().getLoop()->runEvery(std::chrono::seconds(60),[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid,morning_tasks,noon_tasks,night_tasks,evening_tasks](){
 
      int now = clock_reader();
 
      std::vector<std::pair<std::string, std::string>> slots_tasks;
 
      if (now == 245) slots_tasks = morning_tasks;
-     else if (now == 246) slots_tasks = noon_tasks;
-     else if (now == 1830) slots_tasks = evening_tasks;
-     else if (now == 2230) slots_tasks = night_tasks;
+     else if (now == 1517) slots_tasks = noon_tasks;
+     else if (now == 1518) slots_tasks = evening_tasks;
+     else if (now == 1519) slots_tasks = night_tasks;
      else return;
 
-
-    auto req = drogon::HttpRequest::newHttpFormPostRequest();
+     dbClient-> execSqlAsync("SELECT * FROM entries WHERE entry_date = $1 AND question_key = $2;",[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid,slots_tasks](const drogon::orm::Result &result){
+         if (!result.empty()){
+         std::cout << "Already ran today" <<std::endl;
+         return;
+         }
+     auto req = drogon::HttpRequest::newHttpFormPostRequest();
      req->setPath(t_path);
      req->setParameter("To", to_number);
      req->setParameter("ContentSid",content_sid);
@@ -119,7 +115,7 @@ int main(){
      req->setParameter("From", from_number);
      req->addHeader("Authorization",login);
 
-     client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
+      client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
          if (result != drogon::ReqResult::Ok){
           std::cout
           << "error while sending request to server! result: "
@@ -129,15 +125,18 @@ int main(){
         std::cout << "receive response!" << std::endl;
         std::cout << response->getBody() << std::endl;
      });
-         for (int i = 0; i < slots_tasks.size(); i++){
-        dbClient->execSqlAsync("INSERT INTO entries (entry_date,question_key) VALUES ($1,$2);",[](const drogon::orm::Result &result){
-        std::cout << "Insert OK" << std::endl;
-      },
-      [](const drogon::orm::DrogonDbException &e){
-        std::cerr << "error: " << e.base().what() << std::endl;
+
+      for (int i = 0; i < slots_tasks.size(); i++){
+          dbClient->execSqlAsync("INSERT INTO entries (entry_date,question_key) VALUES ($1,$2);",[](const drogon::orm::Result &result){
+          std::cout << "Insert OK" << std::endl;
+      },[](const drogon::orm::DrogonDbException &e){
+          std::cerr << "error: " << e.base().what() << std::endl;
       },today_date(),slots_tasks[i].second);
-        }
-     std::cout << "tick" << std::endl;
+      }
+
+     },[](const drogon::orm::DrogonDbException &e){
+     std::cerr << "error " << e.base().what() << std::endl;
+     },today_date(),slots_tasks[0].second);
  });
 
  //Receiving tasks
@@ -226,19 +225,10 @@ drogon::app().registerHandler(
     } else{
       std::cerr << "Unrecognised reply" << body << std:: endl;
     }
-    //resp->setBody("");
     std::cout << "Message:" << body << std::endl;
     callback(resp);
     });
-
-    //build the connection first
-    //Set HTTP listener address and port
     drogon::app().addListener("0.0.0.0", 5555);
-
-    //Load config file
-    //drogon::app().loadConfigFile("../config.json");
-    //drogon::app().loadConfigFile("../config.yaml");
-    //Run HTTP framework,the method will block in the internal event loops
     drogon::app().run();
     return 0;
 }
