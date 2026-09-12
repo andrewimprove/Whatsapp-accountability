@@ -19,7 +19,7 @@ endif ()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(${PROJECT_NAME} helpers/helper.cc main.cc)
+add_executable(${PROJECT_NAME} helpers/helper.cc pmconfig/config.cc main.cc)
 # ##############################################################################
 # If you include the drogon source code locally in your project, use this method
 # to add drogon 

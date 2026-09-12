@@ -17,28 +17,21 @@
 #include <iterator>
 #include <utility>
 #include <helpers/helper.h>
-
+#include "pmconfig/config.h"
 
 using namespace std;
 int main(){
 
-  string from_number = Helper::require_env("TSID");
-  string sid = Helper::require_env("TTOKEN");
-  string auth_token = Helper::require_env("TNUMBER");
-  string db_connect = Helper::require_env("DB_URL");
-  string content_sid =Helper::require_env("CONTENT_SID");
+ Config cfg = load_config();
+ string currDate = Helper::today_date();
+int clock = Helper::clock_reader();
 
-  string currDate = Helper::today_date();
-  int clock = Helper::clock_reader();
-
-  auto dbClient = drogon::orm::DbClient::newPgClient(db_connect,4);
-
-  string to_number = "whatsapp:+61405245648"; //to what number
+  auto dbClient = drogon::orm::DbClient::newPgClient(cfg.db_connect,4);
 
   auto client = drogon::HttpClient::newHttpClient("https://api.twilio.com"); //a HTTP client to twillio
 
-  string t_path = "/2010-04-01/Accounts/" + sid + "/Messages.json"; //set the path
-  string cred = sid + ":" + auth_token;
+  string t_path = "/2010-04-01/Accounts/" + cfg.sid + "/Messages.json"; //set the path
+  string cred = cfg.sid + ":" + cfg.auth_token;
   string cred_encoded = drogon::utils::base64Encode(cred);
   string login = "Basic " + cred_encoded;
 
@@ -58,28 +51,28 @@ int main(){
 
 
 //Message every 200 seconds
- drogon::app().getLoop()->runEvery(chrono::seconds(60),[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid,morning_tasks,noon_tasks,night_tasks,evening_tasks,currDate,clock](){
+ drogon::app().getLoop()->runEvery(chrono::seconds(5),[cfg,client,t_path,tasks,login,dbClient,morning_tasks,noon_tasks,night_tasks,evening_tasks,currDate,clock](){
 
      vector<pair<string, string>> slots_tasks;
 
-     if (clock == 245) slots_tasks = morning_tasks;
+     if (clock == 1730) slots_tasks = morning_tasks;
      else if (clock == 1517) slots_tasks = noon_tasks;
      else if (clock == 1518) slots_tasks = evening_tasks;
      else if (clock == 1519) slots_tasks = night_tasks;
      else return;
 
-     dbClient-> execSqlAsync("SELECT * FROM entries WHERE entry_date = $1 AND question_key = $2;",[client,t_path,to_number,from_number,tasks,login,dbClient,content_sid,slots_tasks,currDate](const drogon::orm::Result &result){
+     dbClient-> execSqlAsync("SELECT * FROM entries WHERE entry_date = $1 AND question_key = $2;",[cfg,client,t_path,tasks,login,dbClient,slots_tasks,currDate](const drogon::orm::Result &result){
          if (!result.empty()){
          cout << "Already ran today" <<endl;
          return;
          }
      auto req = drogon::HttpRequest::newHttpFormPostRequest();
      req->setPath(t_path);
-     req->setParameter("To", to_number);
-     req->setParameter("ContentSid",content_sid);
+     req->setParameter("To", cfg.to_number);
+     req->setParameter("ContentSid",cfg.content_sid);
      string start = "{\"1\":\"" + slots_tasks[0].first + "\"}";
      req->setParameter("ContentVariables",start);
-     req->setParameter("From", from_number);
+     req->setParameter("From", cfg.from_number);
      req->addHeader("Authorization",login);
 
       client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
@@ -108,28 +101,28 @@ int main(){
 
  //Receiving tasks
 drogon::app().registerHandler(
-    "/whatsapp",[dbClient,tasks,client,t_path,to_number,from_number,login,content_sid,currDate](const drogon::HttpRequestPtr &req, function<void(const drogon::HttpResponsePtr &)> &&callback){
+    "/whatsapp",[cfg,dbClient,tasks,client,t_path,login,currDate](const drogon::HttpRequestPtr &req, function<void(const drogon::HttpResponsePtr &)> &&callback){
     drogon::HttpResponsePtr resp = drogon::HttpResponse::newHttpResponse();
     string body = req->getParameter("Body");
 
     transform(body.begin(), body.end(), body.begin(),::tolower);
 
     if (body == "yes"){
-         dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[dbClient,client,t_path,to_number,from_number,login,tasks,content_sid,currDate](const drogon::orm::Result &result){
+         dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[cfg,dbClient,client,t_path,login,tasks,currDate](const drogon::orm::Result &result){
              if (result.empty()){
              cout << "Nothing is pending" << endl;
                   return;
              }
          string pending_key = result[0]["question_key"].as<string>();
          int pending_id = result[0]["id"].as<int>();
-         dbClient->execSqlAsync("UPDATE entries SET answer_bool = $1 WHERE id = $2;",[dbClient,pending_key,client,t_path,to_number,from_number,login,tasks,content_sid,currDate](const drogon::orm::Result &r){
+         dbClient->execSqlAsync("UPDATE entries SET answer_bool = $1 WHERE id = $2;",[cfg,dbClient,pending_key,client,t_path,login,tasks,currDate](const drogon::orm::Result &r){
              cout << "FILLED" << pending_key << endl;
-             dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[client,t_path,to_number,from_number,login,tasks,content_sid,currDate](const drogon::orm::Result &result){
+             dbClient->execSqlAsync("SELECT * FROM entries where entry_date = $1 AND answer_bool IS NULL ORDER BY id LIMIT 1;",[cfg,client,t_path,login,tasks,currDate](const drogon::orm::Result &result){
                  if (result.empty()){
                  auto req = drogon::HttpRequest::newHttpFormPostRequest();
                      req->setPath(t_path);
-                     req->setParameter("To", to_number);
-                     req->setParameter("From", from_number);
+                     req->setParameter("To", cfg.to_number);
+                     req->setParameter("From", cfg.from_number);
                      req->addHeader("Authorization",login);
                     req->setParameter("Body","All Tasks are finished, well done!");
                    client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
@@ -156,10 +149,10 @@ drogon::app().registerHandler(
                    }
                      auto req = drogon::HttpRequest::newHttpFormPostRequest();
                      req->setPath(t_path);
-                     req->setParameter("To", to_number);
-                     req->setParameter("From", from_number);
+                     req->setParameter("To", cfg.to_number);
+                     req->setParameter("From", cfg.from_number);
                      req->addHeader("Authorization",login);
-                     req->setParameter("ContentSid",content_sid);
+                     req->setParameter("ContentSid",cfg.content_sid);
                      string start = "{\"1\":\"" + next_text + "\"}";
                      req->setParameter("ContentVariables",start);
                      client->sendRequest(req,[](drogon::ReqResult result, const drogon::HttpResponsePtr &response){
